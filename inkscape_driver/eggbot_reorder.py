@@ -71,25 +71,25 @@ def find_ordering(objlist, allowReverse):
 	Returns a list of (id, reverse), as well as the original and optimized
 	"air distance" which is just the distance traveled in the air. Reverse indicate if the path must be reversed
 	"""
-
+	objlistCopy = objlist[:]
 	start = (0.0, 0.0) #Start point TODO 0,0 is not always top left of the page
 
 	# let's figure out the default in-air length (this is not meaningful as we are using the dictionary ordering)
-	air_length_default = 0
-	old = start
+	#air_length_default = 0
+	#old = start
 
-	for i, path in enumerate(objlist[1:]):
-		air_length_default += objlist[i-1].dist_to_start(path)
+	#for i, path in enumerate(objlistCopy[1:]):
+		#air_length_default += objlistCopy[i-1].dist_to_start(path)
 
-	air_length_ordered = 0
+	#air_length_ordered = 0
 
 	sort_list = []
 	prev = Path("", start, start)
 
 	# for the previous end point, iterate over each remaining path and pick the closest starting point or ending point if allowed
-	while objlist:
+	while objlistCopy:
 		min_distance = sys.float_info.max # The biggest number possible
-		for path in objlist:
+		for path in objlistCopy:
 			dist_to_start = prev.dist_to_start(path)
 			dist_to_end = prev.dist_to_end(path)
 
@@ -102,12 +102,53 @@ def find_ordering(objlist, allowReverse):
 				path.reverse()
 				min_path = path
 
-		air_length_ordered += min_distance
+		#air_length_ordered += min_distance
 		sort_list.append(min_path)
-		objlist.remove(min_path)
+		objlistCopy.remove(min_path)
 		prev = min_path
 
-	return sort_list, air_length_default, air_length_ordered
+	return sort_list#, air_length_default, air_length_ordered
+
+def two_opt(objList):
+	epsilon = 0.1
+
+	sortList = objList[:]
+	sortList.insert(0, Path("-1", (0,0), (0,0)))
+	sortList.append(Path("-2", (0,0), (0,0)))
+	improvement = True
+
+	while improvement:
+		improvement = False
+		for i in range(1, len(sortList)-2):
+			for j in range(i+1, len(sortList)-1):
+				distOriginal = sortList[i-1].dist_to_start(sortList[i])
+				distOriginal += sortList[j].dist_to_start(sortList[j+1])
+
+				distSwitched = sortList[i-1].dist_to_end(sortList[j])
+				distSwitched += dist_t(sortList[i].get_start(), sortList[j+1].get_start())
+
+				if (distSwitched+epsilon) < distOriginal:
+					#inkex.debug("({}, {}) {} {}".format(i, j, distOriginal, distSwitched))
+
+					#for p in sortList: inkex.debug(p)
+					#inkex.debug(" ")
+					#Order of elements must be reversed in between i and j (inclusive)
+					sortList = sortList[:i] + sortList[i:j+1][::-1] + sortList[j+1:]
+					#sortList[i], sortList[j] = sortList[j], sortList[i]
+
+					#The path direction must also be reversed in between i and j
+					for index in range(i, j+1):
+						sortList[index].reverse()
+					improvement = True
+					break
+			if improvement:
+				break
+
+	del sortList[0]
+	del sortList[-1]
+	assert(len(sortList) == len(objList))
+
+	return sortList
 
 def conv(x, y, trans_matrix=None):
 	"""
@@ -177,6 +218,8 @@ class EggBotReorderPaths(inkex.Effect):
 		inkex.Effect.__init__(self)
 		self.OptionParser.add_option("-r", "--allowReverse", action="store", type="inkbool",
                         dest="allowReverse", default=True, help="Allow path reversal")
+		self.OptionParser.add_option("-t", "--twoOpt", action="store", type="inkbool",
+                        dest="twoOpt", default=False, help="Enable 2-opt")
 
 	def get_start_end(self, node):
 		"""Given a node, return the start and end points"""
@@ -230,7 +273,16 @@ class EggBotReorderPaths(inkex.Effect):
 				objlist.append(path)
 
 			# sort / order the objects
-			sort_order, air_distance_default, air_distance_ordered = find_ordering(objlist, self.options.allowReverse)
+			sort_order = find_ordering(objlist, self.options.allowReverse)
+			#air_distance_default, air_distance_ordered = 0,0
+
+			new_air_distance = sum(sort_order[i-1].dist_to_start(path) for i, path in enumerate(sort_order[1:]))
+			inkex.debug("Air distance before 2-opt: {}".format(new_air_distance))
+
+			if self.options.twoOpt:
+				sort_order = two_opt(sort_order)
+				new_air_distance = sum(sort_order[i-1].dist_to_start(path) for i, path in enumerate(sort_order[1:]))
+				inkex.debug("Air distance after 2-opt: {}".format(new_air_distance))
 
 			reverseCount = 0
 			for path in sort_order:
@@ -251,11 +303,12 @@ class EggBotReorderPaths(inkex.Effect):
 			inkex.errormsg("Reversed {} paths.".format(reverseCount))
 			#fid.close()
 
-			if air_distance_default > 0:  # don't divide by zero. :P
-				improvement_pct = 100 * (( air_distance_default - air_distance_ordered) / (air_distance_default))
-				inkex.errormsg(gettext.gettext("Selected paths have been reordered and optimized for quicker EggBot plotting.\n\nDefault air-distance: %d\nOptimized air-distance: %d\nDistance reduced by: %1.2d%%\n\nHave a nice day!" % (air_distance_default, air_distance_ordered, improvement_pct)))
-			else:
-				inkex.errormsg(gettext.gettext("Unable to start. Please select multiple distinct paths. :)"))
+			#if air_distance_default > 0:  #don't divide by zero. :P
+				#improvement_pct = 100 * (( air_distance_default - air_distance_ordered) / (air_distance_default))
+				#inkex.errormsg(gettext.gettext("Selected paths have been reordered and optimized for quicker EggBot plotting.\n\nDefault air-distance: %d\nOptimized air-distance: %d\nDistance reduced by: %1.2d%%\n\nHave a nice day!" % (air_distance_default, air_distance_ordered, improvement_pct)))
+			#else:
+				#inkex.errormsg(gettext.gettext("Unable to start. Please select multiple distinct paths. :)"))
+
 
 
 e = EggBotReorderPaths()

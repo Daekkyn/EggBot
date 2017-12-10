@@ -27,6 +27,7 @@
  your document before running this routine.
   </_param>
   <param name="allowReverse" type="boolean" _gui-text="Allow Reverse">true</param>
+  <param name="twoOpt" type="boolean" _gui-text="Enable 2-opt (and reverse)">false</param>
 
   <effect needs-live-preview="false" needs-document="no">
     <object-type>all</object-type>
