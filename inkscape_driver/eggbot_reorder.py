@@ -109,46 +109,82 @@ def find_ordering(objlist, allowReverse):
 
 	return sort_list#, air_length_default, air_length_ordered
 
-def two_opt(objList):
-	epsilon = 0.1
+# Swap the paths order and direction between i and j (inclusive)
+def swap(objList, i, j):
+	if i == j:
+		return
+	if i > j:
+		i, j = j, i
 
-	sortList = objList[:]
-	sortList.insert(0, Path("-1", (0,0), (0,0)))
-	sortList.append(Path("-2", (0,0), (0,0)))
+	#Swap the order by adding the element up to i, followed by the element from i to j in reverse order, followed by the the remaining elements
+	swappedList = objList[:i] + objList[i:j+1][::-1] + objList[j+1:]
+
+	#Reverse the path directions between i and j
+	for index in range(i, j+1):
+		swappedList[index].reverse()
+	return swappedList
+
+# Computes the distance between the end and start of each path
+def air_distance(path_list):
+	return sum(path_list[i-1].dist_to_start(path_list[i]) for i in range(1, len(path_list)))
+
+# Tries to solve the TSP using 2-opt local serach algorithm
+def two_opt(path_list):
+
+	# To make sure we don't swap 2 nodes with exactly the same distance
+	EPSILON = 0.1
+
+	# The pen start and end position
+	HOME = (0, 0)
+
+	# To speed up the processing, we limit the number of improvements
+	MAX_IMPROVEMENT_COUNT = 10
+
+	sort_list = path_list[:]
+
+	#The first and last element are fixed so we add 2 elements that we will remove later
+	sort_list.insert(0, Path("-1", HOME, HOME))
+	sort_list.append(Path("-2", HOME, HOME))
 	improvement = True
+	improvement_count = 0
 
-	while improvement:
+	#We find the improvement that reduces the distance the most
+	while improvement and improvement_count < MAX_IMPROVEMENT_COUNT:
 		improvement = False
-		for i in range(1, len(sortList)-2):
-			for j in range(i+1, len(sortList)-1):
-				distOriginal = sortList[i-1].dist_to_start(sortList[i])
-				distOriginal += sortList[j].dist_to_start(sortList[j+1])
+		best_improvement = (0, -1, -1) #(Improvement distance, i, j)
+		for i in range(1, len(sort_list)-2):
+			for j in range(i+1, len(sort_list)-1):
+				dist_original = sort_list[i-1].dist_to_start(sort_list[i])
+				dist_original += sort_list[j].dist_to_start(sort_list[j+1])
 
-				distSwitched = sortList[i-1].dist_to_end(sortList[j])
-				distSwitched += dist_t(sortList[i].get_start(), sortList[j+1].get_start())
+				# The path i and j will be reversed so we have to compute the distance of the reversed paths
+				dist_switched = sort_list[i-1].dist_to_end(sort_list[j])
+				dist_switched += dist_t(sort_list[i].get_start(), sort_list[j+1].get_start())
 
-				if (distSwitched+epsilon) < distOriginal:
-					#inkex.debug("({}, {}) {} {}".format(i, j, distOriginal, distSwitched))
+				improvement_distance = dist_original - dist_switched
 
-					#for p in sortList: inkex.debug(p)
-					#inkex.debug(" ")
-					#Order of elements must be reversed in between i and j (inclusive)
-					sortList = sortList[:i] + sortList[i:j+1][::-1] + sortList[j+1:]
-					#sortList[i], sortList[j] = sortList[j], sortList[i]
-
-					#The path direction must also be reversed in between i and j
-					for index in range(i, j+1):
-						sortList[index].reverse()
+				if improvement_distance > EPSILON and improvement_distance > best_improvement[0]:
+					#inkex.debug( "({}, {}) {}".format(i, j, improvement_distance) )
+					best_improvement = (improvement_distance, i, j)
+					#for p in sort_list: inkex.debug(p)
 					improvement = True
-					break
-			if improvement:
-				break
 
-	del sortList[0]
-	del sortList[-1]
-	assert(len(sortList) == len(objList))
 
-	return sortList
+		if improvement:
+			#old_distance = air_distance(sort_list)
+			sort_list = swap(sort_list, best_improvement[1], best_improvement[2])
+			#new_distance = air_distance(sort_list)
+
+			improvement_count += 1
+			#inkex.debug("Swap: {}, {}".format(best_improvement[1], best_improvement[2]))
+			#inkex.debug("Improvement: {}".format(old_distance-new_distance))
+
+	#We remove the begining and end fake paths
+	del sort_list[0]
+	del sort_list[-1]
+	assert(len(sort_list) == len(path_list))
+
+	return sort_list
 
 def conv(x, y, trans_matrix=None):
 	"""
@@ -273,19 +309,18 @@ class EggBotReorderPaths(inkex.Effect):
 				objlist.append(path)
 
 			# sort / order the objects
-			sort_order = find_ordering(objlist, self.options.allowReverse)
-			#air_distance_default, air_distance_ordered = 0,0
+			objlist = find_ordering(objlist, self.options.allowReverse)
 
-			new_air_distance = sum(sort_order[i-1].dist_to_start(path) for i, path in enumerate(sort_order[1:]))
-			inkex.debug("Air distance before 2-opt: {}".format(new_air_distance))
+			new_air_distance = air_distance(objlist)
+			inkex.debug("Air distance after greedy: {}".format(new_air_distance))
 
 			if self.options.twoOpt:
-				sort_order = two_opt(sort_order)
-				new_air_distance = sum(sort_order[i-1].dist_to_start(path) for i, path in enumerate(sort_order[1:]))
+				objlist = two_opt(objlist)
+				new_air_distance = air_distance(objlist)
 				inkex.debug("Air distance after 2-opt: {}".format(new_air_distance))
 
 			reverseCount = 0
-			for path in sort_order:
+			for path in objlist:
 				node = self.selected[path.id]
 				if node.tag == inkex.addNS('path', 'svg'):
 					node_sp = simplepath.parsePath(node.get('d'))
@@ -296,19 +331,14 @@ class EggBotReorderPaths(inkex.Effect):
 						node_sp_string = simplepath.formatPath(node_sp)
 
 					node.set('d', node_sp_string)
+				elif node.tag == inkex.addNS('g', 'svg') and path.reversed:
+						#TODO Every element of the group should be reversed
+						inkex.errormsg("Reversing groups is currently not possible, please ungroup for better results")
 
 				#keep in mind the different selected ids might have different parents
 				self.getParentNode(node).append(node)
 
 			inkex.errormsg("Reversed {} paths.".format(reverseCount))
-			#fid.close()
-
-			#if air_distance_default > 0:  #don't divide by zero. :P
-				#improvement_pct = 100 * (( air_distance_default - air_distance_ordered) / (air_distance_default))
-				#inkex.errormsg(gettext.gettext("Selected paths have been reordered and optimized for quicker EggBot plotting.\n\nDefault air-distance: %d\nOptimized air-distance: %d\nDistance reduced by: %1.2d%%\n\nHave a nice day!" % (air_distance_default, air_distance_ordered, improvement_pct)))
-			#else:
-				#inkex.errormsg(gettext.gettext("Unable to start. Please select multiple distinct paths. :)"))
-
 
 
 e = EggBotReorderPaths()
