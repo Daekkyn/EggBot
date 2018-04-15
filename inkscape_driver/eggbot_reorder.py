@@ -88,7 +88,7 @@ def find_ordering(objlist, allowReverse):
 
 	# for the previous end point, iterate over each remaining path and pick the closest starting point or ending point if allowed
 	while objlistCopy:
-		min_distance = sys.float_info.max # The biggest number possible
+		min_distance = sys.float_info.max #The biggest number possible
 		for path in objlistCopy:
 			dist_to_start = prev.dist_to_start(path)
 			dist_to_end = prev.dist_to_end(path)
